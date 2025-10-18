@@ -48,16 +48,10 @@ export function InteractiveSpline({
   useEffect(() => {
     if (!splineRef.current) return
 
-    const camera = splineRef.current.findObjectByName('Camera')
-    const robot = splineRef.current.findObjectByName('Robot') ||
+    const camera = splineRef.current.findObjectByName('Camera 2')
+    const robot = splineRef.current.findObjectByName('Bot') ||
                   splineRef.current.findObjectByName('Head') ||
-                  splineRef.current.findObjectByName('Character')
-    const rightArm = splineRef.current.findObjectByName('RightArm') ||
-                     splineRef.current.findObjectByName('Right Arm') ||
-                     splineRef.current.findObjectByName('Arm_R')
-    const leftArm = splineRef.current.findObjectByName('LeftArm') ||
-                    splineRef.current.findObjectByName('Left Arm') ||
-                    splineRef.current.findObjectByName('Arm_L')
+                  splineRef.current.findObjectByName('Top part')
 
     // Update target rotation based on person detection
     if (personDetected) {
@@ -119,26 +113,6 @@ export function InteractiveSpline({
           }
         }
 
-        // Arm animations
-        if (personDetected) {
-          const time = Date.now() / 1000
-
-          if (rightArm) {
-            rightArm.rotation.z = Math.sin(time * 2) * 0.3 + 0.2
-          }
-
-          if (leftArm && isPersonNear) {
-            leftArm.rotation.z = Math.sin(time * 2 + Math.PI) * 0.3 - 0.2
-          }
-        } else {
-          // Slowly return arms to neutral
-          if (rightArm) {
-            rightArm.rotation.z = lerp(rightArm.rotation.z, 0, 0.05)
-          }
-          if (leftArm) {
-            leftArm.rotation.z = lerp(leftArm.rotation.z, 0, 0.05)
-          }
-        }
       } catch (error) {
         console.error('Error in animation loop:', error)
       }
