@@ -11,7 +11,7 @@ interface BodyTrackerProps {
 
 export function BodyTracker({ onBodyDetected, showWebcam = false }: BodyTrackerProps) {
   const webcamRef = useRef<Webcam>(null)
-  const animationFrameRef = useRef<number>()
+  const animationFrameRef = useRef<number | undefined>(undefined)
   const { detectPose, bodyPosition, isLoading, error, isReady } = usePoseDetection()
 
   // Pass body position to parent component

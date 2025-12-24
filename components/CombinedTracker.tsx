@@ -12,7 +12,7 @@ interface CombinedTrackerProps {
 
 export function CombinedTracker({ onPositionDetected, showWebcam = false }: CombinedTrackerProps) {
   const webcamRef = useRef<Webcam>(null)
-  const animationFrameRef = useRef<number>()
+  const animationFrameRef = useRef<number | undefined>(undefined)
 
   // Body detection for distant tracking
   const {
@@ -67,27 +67,24 @@ export function CombinedTracker({ onPositionDetected, showWebcam = false }: Comb
       personDetected = false
     }
 
-    // Only update if values actually changed (prevent infinite loops)
-    setCurrentPosition(prev => {
-      const hasChanged =
-        prev.x !== position.x ||
-        prev.y !== position.y ||
-        prev.isPersonNear !== isFaceNear ||
-        prev.personDetected !== personDetected
+    // Check if values changed
+    const hasChanged =
+      currentPosition.x !== position.x ||
+      currentPosition.y !== position.y ||
+      currentPosition.isPersonNear !== isFaceNear ||
+      currentPosition.personDetected !== personDetected
 
-      if (hasChanged) {
-        const newPosition = {
-          x: position.x,
-          y: position.y,
-          isPersonNear: isFaceNear,
-          personDetected
-        }
-        onPositionDetected(newPosition)
-        return newPosition
+    if (hasChanged) {
+      const newPosition = {
+        x: position.x,
+        y: position.y,
+        isPersonNear: isFaceNear,
+        personDetected
       }
-      return prev
-    })
-  }, [facePosition, bodyPosition])
+      setCurrentPosition(newPosition)
+      onPositionDetected(newPosition)
+    }
+  }, [facePosition, bodyPosition, currentPosition, onPositionDetected])
 
   // Detection loop
   useEffect(() => {

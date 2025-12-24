@@ -11,7 +11,7 @@ interface FaceTrackerProps {
 
 export function FaceTracker({ onFaceDetected, showWebcam = false }: FaceTrackerProps) {
   const webcamRef = useRef<Webcam>(null)
-  const animationFrameRef = useRef<number>()
+  const animationFrameRef = useRef<number | undefined>(undefined)
   const { detectFace, facePosition, isLoading, error, isReady } = useFaceDetection()
 
   // Pass face position to parent component

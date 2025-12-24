@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { InteractiveSpline } from "@/components/ui/interactive-spline"
+import { useState, useCallback } from 'react'
+import { InteractiveSplineWithWave } from "@/components/ui/interactive-spline-with-wave"
 import { CombinedTracker } from "@/components/CombinedTracker"
 
 export default function Home() {
@@ -13,20 +13,20 @@ export default function Home() {
   })
   const [showWebcam, setShowWebcam] = useState(true)
 
-  const handlePositionDetected = (pos: {
+  const handlePositionDetected = useCallback((pos: {
     x: number
     y: number
     isPersonNear: boolean
     personDetected: boolean
   }) => {
     setPosition(pos)
-  }
+  }, [])
 
   return (
     <div className="min-h-screen w-full relative bg-black">
       {/* Main Spline Robot */}
       <div className="w-full h-screen">
-        <InteractiveSpline
+        <InteractiveSplineWithWave
           scene="https://prod.spline.design/kZDDjO5HuC9GJUM2/scene.splinecode"
           className="w-full h-full"
           faceX={position.x}
@@ -87,7 +87,11 @@ export default function Home() {
         <ul className="text-xs text-gray-300 space-y-2">
           <li className="flex items-start gap-2">
             <span className="text-green-400">•</span>
-            <span><strong>Far away:</strong> Tracks your body movement and waves arms</span>
+            <span><strong>Person detected:</strong> Robot waves hello and tracks your movements</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-blue-400">•</span>
+            <span><strong>Far away:</strong> Tracks your body movement with smooth head motion</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-purple-400">•</span>

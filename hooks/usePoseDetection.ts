@@ -84,9 +84,9 @@ export function usePoseDetection() {
         )
 
         if (validPoints.length > 0) {
-          const avgX = validPoints.reduce((sum, kp) => sum + kp.position.x, 0) / validPoints.length
-          const avgY = validPoints.reduce((sum, kp) => sum + kp.position.y, 0) / validPoints.length
-          const avgConfidence = validPoints.reduce((sum, kp) => sum + kp.score, 0) / validPoints.length
+          const avgX = validPoints.reduce((sum, kp) => sum + kp!.position.x, 0) / validPoints.length
+          const avgY = validPoints.reduce((sum, kp) => sum + kp!.position.y, 0) / validPoints.length
+          const avgConfidence = validPoints.reduce((sum, kp) => sum + kp!.score, 0) / validPoints.length
 
           // Normalize coordinates to -1 to 1 range
           const normalizedX = (avgX / video.videoWidth) * 2 - 1

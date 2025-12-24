@@ -6,9 +6,12 @@ An interactive 3D robot powered by Spline that follows your face movements in re
 
 - **Real-time Face Tracking**: Uses MediaPipe's BlazeFace model to detect and track your face
 - **Interactive 3D Robot**: Spline-powered 3D robot that responds to your movements
-- **Camera Following**: Robot camera/head rotates to follow detected face position
+- **🆕 Intelligent Wave Greetings**: Robot automatically waves when a person is detected
+- **Dual Detection Modes**: Body tracking for distant users, face tracking for close interaction
+- **Camera Following**: Robot head rotates to follow detected face position
 - **Live Status Display**: Real-time tracking status and face position coordinates
 - **Webcam Toggle**: Show/hide webcam preview
+- **Robot Parts Discovery**: Automatic identification of robot components for animation
 
 ## Technologies Used
 
@@ -17,6 +20,8 @@ An interactive 3D robot powered by Spline that follows your face movements in re
 - **Tailwind CSS v4** - Styling
 - **Spline** - 3D interactive design
 - **MediaPipe** - Face detection AI model
+- **TensorFlow.js** - Body pose estimation
+- **GSAP** - Smooth animation library for robot movements
 - **react-webcam** - Webcam access in React
 
 ## Getting Started
@@ -50,11 +55,14 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## How It Works
 
-### Face Detection Flow
+### Person Detection & Interaction Flow
 
 ```
-Webcam → MediaPipe Face Detector → Face Position (x, y) →
-Spline Robot → Camera/Head Rotation → Visual Feedback
+Webcam → AI Detection (MediaPipe Face + TensorFlow Body) → 
+Position Analysis → Robot Response:
+├─ Person Detected → Wave Animation (GSAP)
+├─ Far Away → Body Tracking + Head Movement
+└─ Close Up → Face Mimicking Mode
 ```
 
 ### Key Components
@@ -74,7 +82,13 @@ Spline Robot → Camera/Head Rotation → Visual Feedback
 - Receives face position updates
 - Rotates camera/robot to follow face
 
-#### 4. Main Page (`app/page.tsx`)
+#### 4. Interactive Spline with Wave (`components/ui/interactive-spline-with-wave.tsx`)
+- Loads Spline 3D scene and discovers robot parts
+- Manages wave animations using GSAP
+- Handles smooth head tracking and idle animations
+- Provides robot parts debugging information
+
+#### 5. Main Page (`app/page.tsx`)
 - Orchestrates all components
 - Manages state
 - Provides UI controls
@@ -116,15 +130,36 @@ Replace the scene URL in `app/page.tsx`:
 />
 ```
 
+### Wave Animation Customization
+
+Edit `components/ui/interactive-spline-with-wave.tsx`:
+
+```typescript
+// Adjust wave speed
+.to(waveTarget.rotation, {
+  duration: 0.2, // Faster wave (default: 0.3)
+  y: initialRotation.y + 0.3,
+})
+
+// Adjust wave intensity
+y: initialRotation.y + 0.5 // Bigger wave (default: 0.3)
+
+// Change wave pattern (add more oscillations)
+.to(waveTarget.rotation, { duration: 0.3, y: initialRotation.y + 0.3 })
+.to(waveTarget.rotation, { duration: 0.3, y: initialRotation.y - 0.2 })
+.to(waveTarget.rotation, { duration: 0.3, y: initialRotation.y + 0.3 })
+.to(waveTarget.rotation, { duration: 0.3, y: initialRotation.y - 0.2 })
+```
+
 ### Robot Object Names
 
-The code looks for these object names in your Spline scene:
-- `Camera` - Main camera
-- `Robot` - Robot object
-- `Head` - Robot head
-- `Character` - Character object
+The code automatically searches for these object names in your Spline scene:
+- **Head**: `Head`, `head`, `Top part`, `Bot Head`, `Robot Head`, `Character Head`
+- **Arms**: `Right Arm`, `Left Arm`, `RightArm`, `LeftArm`, `Arm Right`, `Arm Left`
+- **Hands**: `Right Hand`, `Left Hand`, `RightHand`, `LeftHand`, `Hand Right`, `Hand Left`
+- **Body**: `Body`, `body`, `Torso`, `Character`, `Robot`, `Bot`
 
-Update object names in `interactive-spline.tsx` to match your scene.
+The robot will automatically use the first available arm or hand part for waving.
 
 ## Performance Tips
 
@@ -144,6 +179,13 @@ Update object names in `interactive-spline.tsx` to match your scene.
 1. Check console for Spline object names
 2. Verify face is detected (green indicator)
 3. Adjust sensitivity values
+
+### Robot Not Waving
+1. Check console for "Robot Parts Found" debug info
+2. Ensure robot scene has separate arm/hand objects
+3. Look for error messages in browser console
+4. Verify GSAP animation timeline is running
+5. Check if `isWaving` state is properly managed
 
 ### Low FPS / Laggy
 - Lower `detectionInterval` value
@@ -172,6 +214,9 @@ spline-robot-demo/
 
 ## Future Enhancements
 
+- [x] ✅ **Wave animation when person detected**
+- [x] ✅ **Robot part auto-discovery system** 
+- [x] ✅ **GSAP-powered smooth animations**
 - [ ] Add pose detection for full-body tracking
 - [ ] Add hand gesture controls
 - [ ] Multiple face tracking
@@ -180,6 +225,9 @@ spline-robot-demo/
 - [ ] Recording/screenshot features
 - [ ] Custom robot animations based on distance
 - [ ] Eye-tracking for more precise interaction
+- [ ] Different wave patterns (casual, formal, excited)
+- [ ] Robot facial expressions
+- [ ] Voice-triggered robot responses
 
 ## Resources
 

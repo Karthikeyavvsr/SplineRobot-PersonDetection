@@ -1,0 +1,956 @@
+'use client'
+
+import { Suspense, lazy, useEffect, useRef, useState, useCallback } from 'react'
+import type { Application, SPEObject } from '@splinetool/runtime'
+import { gsap } from 'gsap'
+
+const Spline = lazy(() => import('@splinetool/react-spline'))
+
+interface RobotParts {
+  head: SPEObject | null
+  rightArm: SPEObject | null
+  leftArm: SPEObject | null
+  rightHand: SPEObject | null
+  leftHand: SPEObject | null
+  rightShoulder: SPEObject | null
+  leftShoulder: SPEObject | null
+  body: SPEObject | null
+}
+
+interface InteractiveSplineProps {
+  scene: string
+  className?: string
+  faceX?: number // -1 (left) to 1 (right)
+  faceY?: number // -1 (top) to 1 (bottom)
+  onLoad?: (spline: Application) => void
+  isPersonNear?: boolean // true when person is close (for face mimicking)
+  personDetected?: boolean // true when any person is detected (for arm wave)
+}
+
+export function InteractiveSplineWithWave({
+  scene,
+  className,
+  faceX = 0,
+  faceY = 0,
+  onLoad,
+  isPersonNear = false,
+  personDetected = false
+}: InteractiveSplineProps) {
+  const splineRef = useRef<Application | null>(null)
+  const animationFrameRef = useRef<number | undefined>(undefined)
+  const idleAnimationRef = useRef<number | undefined>(undefined)
+  const robotPartsRef = useRef<RobotParts>({
+    head: null,
+    rightArm: null,
+    leftArm: null,
+    rightHand: null,
+    leftHand: null,
+    rightShoulder: null,
+    leftShoulder: null,
+    body: null
+  })
+  const [isWaving, setIsWaving] = useState(false)
+  const [robotPartsFound, setRobotPartsFound] = useState<string[]>([])
+  const previousPersonDetected = useRef(false)
+
+  // Smooth interpolation for robot head rotation
+  const currentRotationRef = useRef({ x: 0, y: 0 })
+  const targetRotationRef = useRef({ x: 0, y: 0 })
+
+  // Enhanced robot part discovery with detailed inspection
+  const findRobotParts = (spline: Application): RobotParts => {
+    const parts: RobotParts = {
+      head: null,
+      rightArm: null,
+      leftArm: null,
+      rightHand: null,
+      leftHand: null,
+      rightShoulder: null,
+      leftShoulder: null,
+      body: null
+    }
+    const foundParts: string[] = []
+
+    console.log('🔍 ENHANCED ROBOT INSPECTION STARTED')
+    
+    // Get ALL objects for comprehensive analysis
+    const allObjects = spline.getAllObjects?.() || []
+    console.log(`📊 Total objects in scene: ${allObjects.length}`)
+    
+    // Log all named objects for debugging
+    const namedObjects = allObjects.filter(obj => obj.name && obj.name.trim() !== '')
+    console.log('📋 ALL NAMED OBJECTS IN SCENE:')
+    namedObjects.forEach((obj, index) => {
+      console.log(`  ${index + 1}. "${obj.name}" - ID: ${obj.id || 'none'}`)
+    })
+
+    // Head options (more specific search)
+    const headNames = ['Head', 'head', 'Robot Head', 'Bot Head', 'Character Head', 'Top part']
+    for (const name of headNames) {
+      const obj = spline.findObjectByName(name)
+      if (obj) {
+        parts.head = obj
+        foundParts.push(`Head: ${name}`)
+        console.log(`✅ HEAD found: ${name}`)
+        break
+      }
+    }
+
+    // Shoulder search (PRIORITY - shoulders control main arm movement)
+    const rightShoulderNames = ['Right Shoulder', 'RightShoulder', 'Shoulder Right', 'R Shoulder', 'right shoulder']
+    for (const name of rightShoulderNames) {
+      const obj = spline.findObjectByName(name)
+      if (obj) {
+        parts.rightShoulder = obj
+        foundParts.push(`Right Shoulder: ${name}`)
+        console.log(`✅ RIGHT SHOULDER found: ${name}`)
+        break
+      }
+    }
+
+    const leftShoulderNames = ['Left Shoulder', 'LeftShoulder', 'Shoulder Left', 'L Shoulder', 'left shoulder']
+    for (const name of leftShoulderNames) {
+      const obj = spline.findObjectByName(name)
+      if (obj) {
+        parts.leftShoulder = obj
+        foundParts.push(`Left Shoulder: ${name}`)
+        console.log(`✅ LEFT SHOULDER found: ${name}`)
+        break
+      }
+    }
+
+    // UPDATED: Right arm search based on actual robot structure
+    const rightArmNames = ['arm', 'Right Arm', 'RightArm', 'Arm Right', 'R Arm', 'Upper Arm Right', 'right arm']
+    for (const name of rightArmNames) {
+      const obj = spline.findObjectByName(name)
+      if (obj) {
+        // Check if this is actually a right arm by checking nearby objects or position
+        parts.rightArm = obj
+        foundParts.push(`Right Arm: ${name}`)
+        console.log(`✅ RIGHT ARM found: ${name}`)
+        break
+      }
+    }
+
+    // UPDATED: Left arm search - now includes 'arm' as potential left arm
+    const leftArmNames = ['Left Arm', 'LeftArm', 'Arm Left', 'L Arm', 'Upper Arm Left', 'left arm']
+    
+    // If no right arm was found, use 'arm' for left arm
+    if (!parts.rightArm) {
+      const genericArm = spline.findObjectByName('arm')
+      if (genericArm) {
+        parts.leftArm = genericArm
+        foundParts.push(`Left Arm: arm (generic)`)
+        console.log(`✅ LEFT ARM found: arm (generic)`)
+      }
+    } else {
+      // Look for a different 'arm' object if right arm already claimed one
+      for (const name of leftArmNames) {
+        const obj = spline.findObjectByName(name)
+        if (obj && obj !== parts.rightArm) {
+          parts.leftArm = obj
+          foundParts.push(`Left Arm: ${name}`)
+          console.log(`✅ LEFT ARM found: ${name}`)
+          break
+        }
+      }
+    }
+
+    // UPDATED: Right hand/forearm search based on actual scene objects
+    const rightHandNames = ['Hand', 'Hand Instance', 'forearm', 'elbow', 'Right Hand', 'RightHand', 'Hand Right', 'R Hand', 'Right Forearm']
+    for (const name of rightHandNames) {
+      const obj = spline.findObjectByName(name)
+      if (obj) {
+        parts.rightHand = obj
+        foundParts.push(`Right Hand/Forearm: ${name}`)
+        console.log(`✅ RIGHT HAND/FOREARM found: ${name}`)
+        break
+      }
+    }
+
+    // UPDATED: Left hand search - prioritize 'Hand LEFT' then fallbacks
+    const leftHandNames = ['Hand LEFT', 'Left Hand', 'LeftHand', 'Hand Left', 'L Hand', 'Left Forearm', 'LeftForearm']
+    for (const name of leftHandNames) {
+      const obj = spline.findObjectByName(name)
+      if (obj && obj !== parts.rightHand) { // Don't use same object as right hand
+        parts.leftHand = obj
+        foundParts.push(`Left Hand/Forearm: ${name}`)
+        console.log(`✅ LEFT HAND/FOREARM found: ${name}`)
+        break
+      }
+    }
+    
+    // Fallback: If no dedicated left hand found, try to find a second 'forearm' or 'elbow'
+    if (!parts.leftHand) {
+      // Get all objects with these names
+      const allObjects = spline.getAllObjects?.() || []
+      const forearmObjects = allObjects.filter(obj => obj.name === 'forearm' || obj.name === 'elbow')
+      
+      // If we have multiple forearms/elbows, use the second one for left hand
+      if (forearmObjects.length > 1 && parts.rightHand !== forearmObjects[1]) {
+        parts.leftHand = forearmObjects[1]
+        foundParts.push(`Left Hand/Forearm: ${forearmObjects[1].name} (second instance)`)
+        console.log(`✅ LEFT HAND/FOREARM found: ${forearmObjects[1].name} (second instance)`)
+      }
+    }
+
+    // Body (for reference)
+    const bodyNames = ['Body', 'body', 'Torso', 'Chest', 'Robot', 'Character', 'Bot']
+    for (const name of bodyNames) {
+      const obj = spline.findObjectByName(name)
+      if (obj) {
+        parts.body = obj
+        foundParts.push(`Body: ${name}`)
+        console.log(`✅ BODY found: ${name}`)
+        break
+      }
+    }
+
+    // Final analysis
+    console.log('🎯 WAVE CAPABILITY ANALYSIS:')
+    const hasRightShoulder = !!parts.rightShoulder
+    const hasRightArm = !!parts.rightArm
+    const hasRightHand = !!parts.rightHand
+    const hasLeftShoulder = !!parts.leftShoulder
+    const hasLeftArm = !!parts.leftArm
+    const hasLeftHand = !!parts.leftHand
+    
+    console.log(`Right side: Shoulder(${hasRightShoulder}) + Arm(${hasRightArm}) + Hand(${hasRightHand})`)
+    console.log(`Left side: Shoulder(${hasLeftShoulder}) + Arm(${hasLeftArm}) + Hand(${hasLeftHand})`)
+    
+    if (hasRightShoulder && (hasRightArm || hasRightHand)) {
+      console.log('🎉 RIGHT ARM wave capability: EXCELLENT')
+    } else if (hasLeftShoulder && (hasLeftArm || hasLeftHand)) {
+      console.log('🎉 LEFT ARM wave capability: EXCELLENT')
+    } else if (hasRightArm || hasRightHand || hasLeftArm || hasLeftHand) {
+      console.log('⚠️ PARTIAL wave capability: ARM ONLY')
+    } else {
+      console.log('❌ NO wave capability detected')
+    }
+    
+    console.log('🔍 ENHANCED ROBOT INSPECTION COMPLETED')
+
+    setRobotPartsFound(foundParts)
+    return parts
+  }
+
+  // Enhanced natural wave animation
+  const performWaveAnimation = useCallback(() => {
+    console.log('👋 NATURAL WAVE ANIMATION STARTING')
+    
+    if (isWaving) {
+      console.log('❌ Already waving, skipping')
+      return
+    }
+    
+    if (!robotPartsRef.current) {
+      console.log('❌ No robot parts ref')
+      return
+    }
+
+    setIsWaving(true)
+    const parts = robotPartsRef.current
+    const spline = splineRef.current
+
+    if (!spline) {
+      console.log('❌ Spline not ready')
+      setIsWaving(false)
+      return
+    }
+
+    // PRIORITY: Use right arm first (more natural for greeting)
+    const rightShoulder = parts.rightShoulder
+    const rightArm = parts.rightArm
+    const rightHand = parts.rightHand
+    
+    const leftShoulder = parts.leftShoulder
+    const leftArm = parts.leftArm
+    const leftHand = parts.leftHand
+
+    console.log('🎯 WAVE PARTS ANALYSIS:')
+    console.log('RIGHT:', { shoulder: !!rightShoulder, arm: !!rightArm, hand: !!rightHand })
+    console.log('LEFT:', { shoulder: !!leftShoulder, arm: !!leftArm, hand: !!leftHand })
+
+    // Determine best wave configuration based on available parts
+    let waveConfig = null
+    
+    // PRIORITY 1: Full shoulder + arm/hand setup (EXCELLENT quality)
+    if (rightShoulder && (rightArm || rightHand)) {
+      waveConfig = {
+        shoulder: rightShoulder,
+        arm: rightArm,
+        hand: rightHand,
+        side: 'RIGHT',
+        quality: 'EXCELLENT'
+      }
+    } else if (leftShoulder && (leftArm || leftHand)) {
+      waveConfig = {
+        shoulder: leftShoulder,
+        arm: leftArm,
+        hand: leftHand,
+        side: 'LEFT',
+        quality: 'EXCELLENT'
+      }
+    } 
+    // PRIORITY 2: Arm and hand combo (GOOD quality)
+    else if (rightArm && rightHand) {
+      waveConfig = {
+        shoulder: null,
+        arm: rightArm,
+        hand: rightHand,
+        side: 'RIGHT',
+        quality: 'GOOD'
+      }
+    } else if (leftArm && leftHand) {
+      waveConfig = {
+        shoulder: null,
+        arm: leftArm,
+        hand: leftHand,
+        side: 'LEFT',
+        quality: 'GOOD'
+      }
+    }
+    // PRIORITY 3: Single part (BASIC quality)
+    else if (rightHand) {
+      waveConfig = {
+        shoulder: null,
+        arm: rightArm, // might be null
+        hand: rightHand,
+        side: 'RIGHT',
+        quality: 'BASIC'
+      }
+    } else if (leftHand) {
+      waveConfig = {
+        shoulder: null,
+        arm: leftArm, // might be null
+        hand: leftHand,
+        side: 'LEFT',
+        quality: 'BASIC'
+      }
+    } else if (rightArm) {
+      waveConfig = {
+        shoulder: null,
+        arm: rightArm,
+        hand: null,
+        side: 'RIGHT',
+        quality: 'BASIC'
+      }
+    } else if (leftArm) {
+      waveConfig = {
+        shoulder: null,
+        arm: leftArm,
+        hand: null,
+        side: 'LEFT',
+        quality: 'BASIC'
+      }
+    }
+
+    if (!waveConfig) {
+      console.log('❌ No suitable wave parts found')
+      setIsWaving(false)
+      return
+    }
+
+    console.log(`✅ Using ${waveConfig.side} arm configuration (${waveConfig.quality} quality)`)
+    performNaturalWave(waveConfig)
+    
+  }, [isWaving])
+
+  // NATURAL HUMAN-LIKE WAVE ANIMATION
+  // ─────────────────────────────────────────────
+  // Types
+  // ─────────────────────────────────────────────
+  type WaveSide = "LEFT" | "RIGHT"
+  type WaveQuality = "LOW" | "MEDIUM" | "HIGH"
+
+  interface SplineBone {
+    rotation: {
+      x: number
+      y: number
+      z: number
+    }
+  }
+
+  interface WaveConfig {
+    side: WaveSide
+    quality: WaveQuality
+    shoulder?: SplineBone | null
+    arm?: SplineBone | null
+    hand?: SplineBone | null
+  }
+
+  interface RotationState {
+    x: number
+    y: number
+    z: number
+  }
+
+  // ─────────────────────────────────────────────
+  // ABSOLUTE BIOMECHANICAL CONSTANTS
+  // (human-inspired wave targets)
+  // ─────────────────────────────────────────────
+  const BIOMECHANICS = {
+    // Absolute arm positions (based on human wave posture)
+    TARGET_ARM_LIFT: -0.9,       // ≈ -52° arm lift (optimal casual wave height)
+    TARGET_SHOULDER_LIFT: 0.8,   // ≈ +45° shoulder abduction
+    TARGET_ARM_FORWARD: 0.35,    // ≈ +20° forward positioning
+    TARGET_ARM_OUTWARD: 0.26,    // ≈ +15° outward (elbow simulation)
+
+    // Phase durations
+    PHASE_1_DURATION: 0.6,       // Lift to wave height
+    PHASE_2_SEGMENT: 0.6,        // Each wrist oscillation segment
+    PHASE_3_DURATION: 0.6,       // Return to rest
+
+    // Wrist oscillation (relative to base wrist pose)
+    WRIST_OUT_Y: 0.44,           // ~25° outward
+    WRIST_OUT_Z: 0.52,           // ~30° extension
+    WRIST_IN_Y: 0.35,            // ~20° inward
+    WRIST_IN_Z: 0.35,            // ~20° flexion
+    WRIST_DAMPED_Y: 0.35,        // ~20° damped outward
+    WRIST_DAMPED_Z: 0.44,        // ~25° extension (damped)
+
+    // Precision for rest-pose verification
+    REST_TOLERANCE: 0.001
+  }
+
+  const performNaturalWave = useCallback(
+    (config: WaveConfig) => {
+      console.log(`🌊 Starting NATURAL ${config.side} wave (${config.quality} quality)`)
+
+      const isLeftSide = config.side === "LEFT"
+      const sideMultiplier = isLeftSide ? -1 : 1
+
+      const TOTAL_DURATION =
+        BIOMECHANICS.PHASE_1_DURATION +
+        BIOMECHANICS.PHASE_2_SEGMENT * 3 +
+        BIOMECHANICS.PHASE_3_DURATION
+
+      // ─────────────────────────────────────────
+      // 1. INITIAL STATE CAPTURE (for clean restore)
+      // ─────────────────────────────────────────
+      const captureInitialState = (
+        part: SplineBone | null | undefined,
+        partName: string
+      ): RotationState | null => {
+        if (!part || !part.rotation) {
+          console.warn(`⚠️ Cannot capture ${partName} - missing rotation`)
+          return null
+        }
+
+        const state: RotationState = {
+          x: Number(part.rotation.x.toPrecision(8)),
+          y: Number(part.rotation.y.toPrecision(8)),
+          z: Number(part.rotation.z.toPrecision(8))
+        }
+
+        console.log(`💾 Captured ${partName} initial state:`, state)
+        return state
+      }
+
+      const initialStates: {
+        shoulder: RotationState | null
+        arm: RotationState | null
+        hand: RotationState | null
+      } = {
+        shoulder: config.shoulder ? captureInitialState(config.shoulder, "SHOULDER") : null,
+        arm: config.arm ? captureInitialState(config.arm, "ARM") : null,
+        hand: config.hand ? captureInitialState(config.hand, "HAND") : null
+      }
+
+      const hasValidStates = Object.values(initialStates).some((s) => s !== null)
+      if (!hasValidStates) {
+        console.error("❌ No valid initial states captured - aborting wave")
+        setIsWaving(false)
+        return
+      }
+
+      console.log("✅ Initial states validated and stored")
+      setIsWaving(true)
+
+      // Choose wave controller: prefer hand, fallback to arm
+      const wavePart: SplineBone | null | undefined = config.hand ?? config.arm
+      const waveState: RotationState | null =
+        config.hand && initialStates.hand
+          ? initialStates.hand
+          : initialStates.arm
+
+      // ─────────────────────────────────────────
+      // 2. CREATE TIMELINE (with verification onComplete)
+      // ─────────────────────────────────────────
+      const naturalWave = gsap.timeline({
+        onComplete: () => {
+          // Verify that joints returned to their original poses
+          const verifyRestoration = (
+            part: SplineBone | null | undefined,
+            initialState: RotationState | null,
+            partName: string
+          ): boolean => {
+            if (!part || !initialState) return true
+
+            const current: RotationState = {
+              x: Number(part.rotation.x.toPrecision(8)),
+              y: Number(part.rotation.y.toPrecision(8)),
+              z: Number(part.rotation.z.toPrecision(8))
+            }
+
+            const tol = BIOMECHANICS.REST_TOLERANCE
+            const xMatch = Math.abs(current.x - initialState.x) < tol
+            const yMatch = Math.abs(current.y - initialState.y) < tol
+            const zMatch = Math.abs(current.z - initialState.z) < tol
+
+            console.log(`🔍 ${partName} verification:`)
+            console.log(`  Initial: ${JSON.stringify(initialState)}`)
+            console.log(`  Current: ${JSON.stringify(current)}`)
+            console.log(`  Match: X(${xMatch}) Y(${yMatch}) Z(${zMatch})`)
+
+            return xMatch && yMatch && zMatch
+          }
+
+          const shoulderOK = verifyRestoration(config.shoulder ?? null, initialStates.shoulder, "SHOULDER")
+          const armOK = verifyRestoration(config.arm ?? null, initialStates.arm, "ARM")
+          const handOK = verifyRestoration(config.hand ?? null, initialStates.hand, "HAND")
+
+          const allPartsRestored = shoulderOK && armOK && handOK
+
+          if (allPartsRestored) {
+            console.log("✅ ALL PARTS PERFECTLY RESTORED - Wave animation consistent!")
+          } else {
+            console.warn("⚠️ Some parts not perfectly restored - applying FORCE CORRECTION")
+
+            if (!shoulderOK && config.shoulder && initialStates.shoulder) {
+              config.shoulder.rotation.x = initialStates.shoulder.x
+              config.shoulder.rotation.y = initialStates.shoulder.y
+              config.shoulder.rotation.z = initialStates.shoulder.z
+              console.log("🔧 FORCE-CORRECTED shoulder position")
+            }
+
+            if (!armOK && config.arm && initialStates.arm) {
+              config.arm.rotation.x = initialStates.arm.x
+              config.arm.rotation.y = initialStates.arm.y
+              config.arm.rotation.z = initialStates.arm.z
+              console.log("🔧 FORCE-CORRECTED arm position")
+            }
+
+            if (!handOK && config.hand && initialStates.hand) {
+              config.hand.rotation.x = initialStates.hand.x
+              config.hand.rotation.y = initialStates.hand.y
+              config.hand.rotation.z = initialStates.hand.z
+              console.log("🔧 FORCE-CORRECTED hand position")
+            }
+          }
+
+          setIsWaving(false)
+          console.log("✅ Natural wave completed - robot guaranteed at rest position")
+        }
+      })
+
+      // ─────────────────────────────────────────
+      // 3. PHASE 1 – LIFT TO ABSOLUTE WAVE HEIGHT (0 → 0.6s)
+      // ─────────────────────────────────────────
+      if (config.shoulder && initialStates.shoulder) {
+        console.log("🏃 Phase 1a: Shoulder lift to ABSOLUTE 45° position")
+        naturalWave.to(
+          config.shoulder.rotation,
+          {
+            duration: BIOMECHANICS.PHASE_1_DURATION,
+            // ABSOLUTE: always ±45° regardless of rest pose
+            z: sideMultiplier * BIOMECHANICS.TARGET_SHOULDER_LIFT,
+            ease: "power2.out"
+          },
+          0 // start at t = 0
+        )
+      }
+
+      if (config.arm && initialStates.arm) {
+        console.log("🏃 Phase 1b: ARM lift to ABSOLUTE biomechanical position")
+        naturalWave.to(
+          config.arm.rotation,
+          {
+            duration: BIOMECHANICS.PHASE_1_DURATION,
+            // ABSOLUTE targets - consistent across all rigs
+            x: BIOMECHANICS.TARGET_ARM_LIFT,                     // ≈ -52°
+            y: sideMultiplier * BIOMECHANICS.TARGET_ARM_FORWARD, // ≈ ±20°
+            z: sideMultiplier * BIOMECHANICS.TARGET_ARM_OUTWARD, // ≈ ±15°
+            ease: "power2.out",
+            onUpdate: () => {
+              console.log("🦴 BIOMECHANICS: ARM moving to ABSOLUTE position:", {
+                x: config.arm!.rotation.x,
+                y: config.arm!.rotation.y,
+                z: config.arm!.rotation.z
+              })
+            }
+          },
+          0 // in parallel with shoulder
+        )
+      }
+
+      // ─────────────────────────────────────────
+      // 4. PHASE 2 – ABSOLUTE WRIST OSCILLATION (0.6 → 2.4s)
+      //     Using hand if present, else arm
+      // ─────────────────────────────────────────
+      if (wavePart && waveState) {
+        console.log(
+          `🏃 Phase 2: ABSOLUTE wrist oscillation using ${config.hand ? "HAND" : "ARM"}`
+        )
+
+        const BASE_Y = waveState.y
+        const BASE_Z = waveState.z
+
+        // 2A: Outward swing (0.6 → 1.2s)
+        naturalWave.to(
+          wavePart.rotation,
+          {
+            duration: BIOMECHANICS.PHASE_2_SEGMENT,
+            y: BASE_Y + sideMultiplier * BIOMECHANICS.WRIST_OUT_Y,
+            z: BASE_Z + sideMultiplier * BIOMECHANICS.WRIST_OUT_Z,
+            ease: "sine.inOut",
+            onUpdate: () => {
+              console.log("👋 BIOMECHANICS 2A: Wrist outward swing:", {
+                y: wavePart.rotation.y,
+                z: wavePart.rotation.z
+              })
+            }
+          },
+          BIOMECHANICS.PHASE_1_DURATION // start after Phase 1 completes
+        )
+
+        // 2B: Inward swing (1.2 → 1.8s)
+        naturalWave.to(wavePart.rotation, {
+          duration: BIOMECHANICS.PHASE_2_SEGMENT,
+          y: BASE_Y - sideMultiplier * BIOMECHANICS.WRIST_IN_Y,
+          z: BASE_Z - sideMultiplier * BIOMECHANICS.WRIST_IN_Z,
+          ease: "sine.inOut",
+          onUpdate: () => {
+            console.log("👋 BIOMECHANICS 2B: Wrist inward swing:", {
+              y: wavePart.rotation.y,
+              z: wavePart.rotation.z
+            })
+          }
+        })
+
+        // 2C: Damped outward swing (1.8 → 2.4s)
+        naturalWave.to(wavePart.rotation, {
+          duration: BIOMECHANICS.PHASE_2_SEGMENT,
+          y: BASE_Y + sideMultiplier * BIOMECHANICS.WRIST_DAMPED_Y,
+          z: BASE_Z + sideMultiplier * BIOMECHANICS.WRIST_DAMPED_Z,
+          ease: "sine.inOut",
+          onUpdate: () => {
+            console.log("👋 BIOMECHANICS 2C: Wrist damped outward swing:", {
+              y: wavePart.rotation.y,
+              z: wavePart.rotation.z
+            })
+          }
+        })
+      }
+
+      // ─────────────────────────────────────────
+      // 5. PHASE 3 – RETURN TO ORIGINAL REST (2.4 → 3.0s)
+      // ─────────────────────────────────────────
+      const phase3Start = BIOMECHANICS.PHASE_1_DURATION + BIOMECHANICS.PHASE_2_SEGMENT * 3
+
+      console.log("🏃 Phase 3: Returning all joints to captured rest pose")
+
+      if (config.shoulder && initialStates.shoulder) {
+        naturalWave.to(
+          config.shoulder.rotation,
+          {
+            duration: BIOMECHANICS.PHASE_3_DURATION,
+            x: initialStates.shoulder.x,
+            y: initialStates.shoulder.y,
+            z: initialStates.shoulder.z,
+            ease: "power2.inOut",
+            immediateRender: false,
+            onUpdate: () => {
+              console.log("🔄 Shoulder returning to rest:", {
+                target: initialStates.shoulder,
+                current: {
+                  x: Number(config.shoulder!.rotation.x.toPrecision(8)),
+                  y: Number(config.shoulder!.rotation.y.toPrecision(8)),
+                  z: Number(config.shoulder!.rotation.z.toPrecision(8))
+                }
+              })
+            }
+          },
+          phase3Start
+        )
+      }
+
+      if (config.arm && initialStates.arm) {
+        naturalWave.to(
+          config.arm.rotation,
+          {
+            duration: BIOMECHANICS.PHASE_3_DURATION,
+            x: initialStates.arm.x,
+            y: initialStates.arm.y,
+            z: initialStates.arm.z,
+            ease: "power2.inOut",
+            immediateRender: false,
+            onUpdate: () => {
+              console.log("🔄 ARM returning to rest:", {
+                target: initialStates.arm,
+                current: {
+                  x: Number(config.arm!.rotation.x.toPrecision(8)),
+                  y: Number(config.arm!.rotation.y.toPrecision(8)),
+                  z: Number(config.arm!.rotation.z.toPrecision(8))
+                }
+              })
+            }
+          },
+          phase3Start
+        )
+      }
+
+      if (config.hand && initialStates.hand) {
+        naturalWave.to(
+          config.hand.rotation,
+          {
+            duration: BIOMECHANICS.PHASE_3_DURATION,
+            x: initialStates.hand.x,
+            y: initialStates.hand.y,
+            z: initialStates.hand.z,
+            ease: "power2.inOut",
+            immediateRender: false,
+            onUpdate: () => {
+              console.log("🔄 WRIST returning to rest:", {
+                target: initialStates.hand,
+                current: {
+                  x: Number(config.hand!.rotation.x.toPrecision(8)),
+                  y: Number(config.hand!.rotation.y.toPrecision(8)),
+                  z: Number(config.hand!.rotation.z.toPrecision(8))
+                }
+              })
+            }
+          },
+          phase3Start
+        )
+      }
+
+      console.log(
+        `👋 ABSOLUTE BIOMECHANICS ${config.side} wave timeline created (${TOTAL_DURATION.toFixed(
+          1
+        )}s) – FUTURE-PROOF & CONSISTENT`
+      )
+    },
+    [setIsWaving]
+  )
+
+  // Handle Spline load with robot inspection
+  const handleLoad = (spline: Application) => {
+    splineRef.current = spline
+    if (onLoad) onLoad(spline)
+
+    spline.setZoom(1)
+
+    console.log('🤖 ROBOT INSPECTION STARTED 🤖')
+    console.log('Available objects:', spline.getAllObjects?.())
+
+    // Find and store robot parts
+    const parts = findRobotParts(spline)
+    robotPartsRef.current = parts
+
+    console.log('🔍 ROBOT PARTS ANALYSIS:')
+    console.log('Head found:', !!parts.head)
+    console.log('Right Arm found:', !!parts.rightArm)
+    console.log('Left Arm found:', !!parts.leftArm)
+    console.log('Right Hand found:', !!parts.rightHand)
+    console.log('Left Hand found:', !!parts.leftHand)
+    console.log('Body found:', !!parts.body)
+    
+    // Log all available objects for debugging
+    const allObjects = spline.getAllObjects?.() || []
+    const namedObjects = allObjects.map(obj => obj.name || 'unnamed').filter(name => name !== 'unnamed')
+    console.log('ALL SCENE OBJECTS:', namedObjects)
+    
+    // Look for objects that might be arms/hands
+    const possibleArmObjects = namedObjects.filter(name => 
+      name.toLowerCase().includes('arm') || 
+      name.toLowerCase().includes('hand') || 
+      name.toLowerCase().includes('limb') ||
+      name.toLowerCase().includes('appendage') ||
+      name.toLowerCase().includes('wing') ||
+      name.toLowerCase().includes('tentacle') ||
+      name.toLowerCase().includes('finger')
+    )
+    
+    if (possibleArmObjects.length > 0) {
+      console.log('🔍 POSSIBLE ARM/HAND OBJECTS FOUND:', possibleArmObjects)
+    } else {
+      console.log('🔍 NO ARM-LIKE OBJECT NAMES DETECTED')
+      console.log('📋 First 20 object names:', namedObjects.slice(0, 20))
+    }
+
+    console.log('🤖 ROBOT INSPECTION COMPLETED 🤖')
+  }
+
+  // Watch for person detection changes to trigger wave
+  useEffect(() => {
+    if (personDetected && !previousPersonDetected.current) {
+      // Person just detected - trigger wave regardless of distance for now
+      console.log('👋 Person detected - starting greeting wave!')
+      performWaveAnimation()
+    }
+    previousPersonDetected.current = personDetected
+  }, [personDetected, isPersonNear, performWaveAnimation])
+
+  // Smooth animation loop for robot head movements
+  useEffect(() => {
+    if (!splineRef.current) return
+
+    const robotHead = robotPartsRef.current?.head
+
+    // PAUSE head movement during wave animation to prevent conflicts
+    if (isWaving) {
+      console.log('⏸️ Pausing head movement during wave animation')
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+      }
+      if (idleAnimationRef.current) {
+        cancelAnimationFrame(idleAnimationRef.current)
+        idleAnimationRef.current = undefined
+      }
+      return
+    }
+
+    // Update target rotation based on person detection
+    if (personDetected && !isWaving) {
+      // Set target based on face position (reduced intensity for head-only movement)
+      targetRotationRef.current = {
+        x: faceY * 0.2,
+        y: faceX * 0.3
+      }
+
+      // Stop idle animation when person detected
+      if (idleAnimationRef.current) {
+        cancelAnimationFrame(idleAnimationRef.current)
+        idleAnimationRef.current = undefined
+      }
+    } else if (!isWaving) {
+      // Start idle animation when no person detected (and not waving)
+      if (!idleAnimationRef.current) {
+        const startIdleAnimation = () => {
+          const time = Date.now() / 3000
+
+          // Gentle idle "looking around" motion
+          targetRotationRef.current = {
+            x: Math.sin(time * 0.7) * 0.1,
+            y: Math.sin(time * 0.5) * 0.2
+          }
+
+          idleAnimationRef.current = requestAnimationFrame(startIdleAnimation)
+        }
+        startIdleAnimation()
+      }
+    }
+
+    // Smooth interpolation animation loop
+    const smoothUpdate = () => {
+      if (!isWaving) { // Don't interfere with wave animation
+        try {
+          // Lerp (linear interpolation) for smooth movement
+          const lerp = (start: number, end: number, factor: number) => start + (end - start) * factor
+          const smoothFactor = personDetected ? 0.15 : 0.05
+
+          currentRotationRef.current.x = lerp(currentRotationRef.current.x, targetRotationRef.current.x, smoothFactor)
+          currentRotationRef.current.y = lerp(currentRotationRef.current.y, targetRotationRef.current.y, smoothFactor)
+
+          // Apply rotation ONLY to robot head
+          if (robotHead) {
+            if (isPersonNear) {
+              // Mimic mode - more responsive head movement
+              robotHead.rotation.y = faceX * 0.6
+              robotHead.rotation.x = faceY * 0.4
+              // console.log('Head mimic:', faceX, faceY) // Debug: uncomment if needed
+            } else {
+              // Gentle tracking or idle head movement
+              robotHead.rotation.y = currentRotationRef.current.y
+              robotHead.rotation.x = currentRotationRef.current.x
+            }
+          } else {
+            console.log('⚠️ Robot head not found for movement!')
+          }
+        } catch (error) {
+          console.error('Error in head animation loop:', error)
+        }
+      }
+
+      animationFrameRef.current = requestAnimationFrame(smoothUpdate)
+    }
+
+    smoothUpdate()
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+      }
+      if (idleAnimationRef.current) {
+        cancelAnimationFrame(idleAnimationRef.current)
+      }
+    }
+  }, [faceX, faceY, isPersonNear, personDetected, isWaving])
+
+  return (
+    <>
+      <Suspense
+        fallback={
+          <div className="w-full h-full flex items-center justify-center bg-black">
+            <div className="text-center">
+              <span className="loader"></span>
+              <p className="text-white mt-4">Loading 3D Robot...</p>
+            </div>
+          </div>
+        }
+      >
+        <Spline
+          scene={scene}
+          className={className}
+          onLoad={handleLoad}
+          style={{ pointerEvents: 'none' }}
+        />
+      </Suspense>
+
+      {/* Robot Parts Debug Info */}
+      {robotPartsFound.length > 0 && (
+        <div className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-lg backdrop-blur-sm border border-white/20 z-40">
+          <div className="text-center">
+            <h3 className="font-semibold mb-1">🤖 Robot Parts Found</h3>
+            <div className="text-xs text-green-300 space-y-1">
+              {robotPartsFound.map((part, index) => (
+                <div key={index}>{part}</div>
+              ))}
+            </div>
+            {isWaving && (
+              <div className="mt-2 text-yellow-300 font-semibold animate-pulse">
+                👋 Waving...
+              </div>
+            )}
+            <div className="mt-2 space-x-2 flex flex-wrap">
+              <button
+                onClick={() => !isWaving && performWaveAnimation()}
+                disabled={isWaving}
+                className="px-3 py-1 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-500 text-white text-xs rounded transition-colors mb-1"
+              >
+                {isWaving ? 'Waving...' : 'Test Natural Wave'}
+              </button>
+              <button
+                onClick={() => {
+                  const parts = robotPartsRef.current
+                  console.log('🔍 MANUAL DEBUG - Current robot parts:')
+                  console.log('Right arm:', parts?.rightArm ? `✅ ${parts.rightArm.name}` : '❌ None')
+                  console.log('Left arm:', parts?.leftArm ? `✅ ${parts.leftArm.name}` : '❌ None')
+                  console.log('Right hand:', parts?.rightHand ? `✅ ${parts.rightHand.name}` : '❌ None')
+                  console.log('Left hand:', parts?.leftHand ? `✅ ${parts.leftHand.name}` : '❌ None')
+                }}
+                className="px-2 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded transition-colors mb-1"
+              >
+                Debug Parts
+              </button>
+            </div>
+            <div className="mt-2 text-xs text-gray-400">
+              🎯 Wave capability: {robotPartsRef.current?.rightShoulder || robotPartsRef.current?.leftShoulder ? 'EXCELLENT' : (robotPartsRef.current?.rightHand || robotPartsRef.current?.leftHand || robotPartsRef.current?.rightArm || robotPartsRef.current?.leftArm) ? 'DETECTED' : 'NONE'}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
